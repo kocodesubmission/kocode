@@ -31,7 +31,6 @@ import reed_muller_modules
 from reed_muller_modules.logging_utils import *
 
 from opt_einsum import contract   # This is for faster torch.einsum
-from reed_muller_modules.networks import *
 from reed_muller_modules.reedmuller_codebook import *
 from reed_muller_modules.hadamard import *
 from reed_muller_modules.comm_utils import *
