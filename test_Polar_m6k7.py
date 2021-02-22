@@ -45,15 +45,15 @@ parser = argparse.ArgumentParser(description='(m,k) Polar')
 
 parser.add_argument('--m', type=int, default=6, help='number of layers in a polar code m')
 
-parser.add_argument('--batch_size', type=int, default=10000, help='size of the batches')
+parser.add_argument('--batch_size', type=int, default=20000, help='size of the batches')
 parser.add_argument('--hidden_size', type=int, default=64, help='neural network size')
 
 parser.add_argument('--full_iterations', type=int, default=20000, help='full iterations')
 parser.add_argument('--enc_train_iters', type=int, default=50, help='encoder iterations')
 parser.add_argument('--dec_train_iters', type=int, default=500, help='decoder iterations')
 
-parser.add_argument('--enc_train_snr', type=float, default=-1., help='snr at enc are trained')
-parser.add_argument('--dec_train_snr', type=float, default=-4., help='snr at dec are trained')
+parser.add_argument('--enc_train_snr', type=float, default=-0.5., help='snr at enc are trained')
+parser.add_argument('--dec_train_snr', type=float, default=-2.5., help='snr at dec are trained')
 
 parser.add_argument('--power_constraint_type', type=str, default='hard_power_block', help='typer of power constraint')
 parser.add_argument('--loss_type', type=str, default='BCE', choices=['MSE', 'BCE'], help='loss function')
@@ -63,8 +63,8 @@ parser.add_argument('--gpu', type=int, default=0, help='gpus used for training -
 args = parser.parse_args()
 
 
-# device = torch.device("cuda:{0}".format(args.gpu))
-device = torch.device("cpu")
+device = torch.device("cuda:{0}".format(args.gpu))
+# device = torch.device("cpu")
 kwargs = {'num_workers': 4, 'pin_memory': False}
 
 
