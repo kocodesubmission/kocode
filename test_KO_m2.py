@@ -845,133 +845,6 @@ np.savez(results_save_path+'/codebooks_awgn.npz', msg_bits = all_msg_bits.data.c
 
 
 
-RM_Class = ReedMuller(2, args.m)
-Order2_Generator_Matrix = numpy_to_torch(RM_Class.Generator_Matrix[:, ::-1].copy()).to(device)
-
-req_Code_Projection_tensors = torch.load('./data/{0}/Code_Projection_tensor.pt'.format(args.m),map_location=lambda storage, loc: storage)[1:, :, :].to(device)
-req_LLR_Permutation_tensors  = torch.load('./data/{0}/LLR_Permutation_tensor.pt'.format(args.m),map_location=lambda storage, loc: storage).to(device)
-
-
-def compute_llr_for_r_2(llr, mm, current_iteration_num):
-
-#     assert(mm == args.m-args.r+2)
-
-    llr_coset_proj = llr_all_coset_projection_batch(llr, req_Code_Projection_tensors).permute(0, 2,1)  # (batch_size, num_sparse, 128)
-
-    # Returned stuff are LLRs        
-    decoded_cosets = (FirstOrder_SoftFHT_LLR_decoder(llr_coset_proj.reshape(-1, llr_coset_proj.shape[2]), mm-1) < 0).float()  # shape (batch_size * num_sparse, 128)
-
-    # Returned stuff are bits directly
-#     decoded_cosets = compute_llr_hard_decoding(llr_coset_proj.reshape(-1, llr_coset_proj.shape[2]), mm-1)
-
-    decoded_cosets = decoded_cosets.reshape(llr_coset_proj.shape[0], llr_coset_proj.shape[1], decoded_cosets.shape[1]) # (batch, num_sparse, 128)
-
-    decoded_cosets_projected_back = 1 - 2 * coset_to_codeword_back_projection_batch(decoded_cosets,
-                                                req_Code_Projection_tensors) 
-                                                        # Project back the cosets to codeword length. (batch, 256, num_sparse)
-
-    permute_llr_full = permute_a_given_llr_batch(llr, req_LLR_Permutation_tensors)
-
-    predicted_llr = torch.sum(torch.mul(decoded_cosets_projected_back, permute_llr_full), dim=-1) / (2**mm-1)
-
-
-    return  predicted_llr
-
-
-def iterate_llr_for_r_2(llr, iterations, mm):
-    for iteration_num in range(iterations):
-        llr = compute_llr_for_r_2(llr, mm, iteration_num)
-    return llr
-
-
-#### Reed's decoder stuff
-req_Monomial_tensors = {}
-req_Indices_tensors = {}
-
-for t in range(2 + 1):
-    req_Indices_tensors[t] = torch.load('./data/{0}/r_{1}/a_Indices.pt'.format(args.m, t)).to(device)
-    req_Monomial_tensors[t] = torch.load('./data/{0}/r_{1}/all_S_monomials.pt'.format(args.m, t)).to(device)
-
-
-Reeds_msgbits_cumulative_parition =[1, 1 + args.m, 1+ args.m + int(args.m*(args.m-1)/2)]
-
-
-def Reeds_Decoder_avec_msgbits(corrupted_codeword):
-
-    P = torch.zeros(corrupted_codeword.shape).to(device)
-    
-    msg_bits = torch.zeros((corrupted_codeword.shape[0], code_dimension_k)).to(device)
-
-    F = corrupted_codeword
-
-    for t in reversed(range(2 + 1)):
-
-        req_Indices = req_Indices_tensors[t]
-        req_Monomials = req_Monomial_tensors[t]
-
-        c_S_batch = ((F[:, req_Indices].sum(3) % 2).sum(2) >= req_Indices.shape[1]/2).float() # Shape (Batch, (m choose r))
-        
-        if t>0:
-            msg_bits[:, Reeds_msgbits_cumulative_parition[t-1]:Reeds_msgbits_cumulative_parition[t]] = c_S_batch
-        else:
-            msg_bits[:, :Reeds_msgbits_cumulative_parition[t]] = c_S_batch
-        
-        update_term = c_S_batch.mm(req_Monomials) % 2
-
-        F = (F + update_term) % 2
-        P = (P + update_term) % 2
-
-    return P, msg_bits
-
-
-args.list_size = 1
-args.log_list_size = int(math.log(args.list_size, 2))
-
-
-def list_decoding(llr, mm, ss, iterations):
-    
-    if args.list_size > 1:
-    #llr is of shape (batch, 256)
-
-        llr_list_clone = llr.clone()
-
-        llr_tilde = llr.clone()
-
-        t_indices = torch.topk(-llr.abs(), args.log_list_size, 1)[1]  # This collects the 't' indices corresponding to noisy bits in the codeword
-
-        llr_max =  (2*llr).abs().max(1)[0] # (batch_size,)
-
-        # scaled_binary_matrix_list_sized_pm_1 = llr_max * Binary_Matrix_List_Sized_pm_1 
-
-        c_hat_u = torch.zeros(llr.shape[0], llr.shape[1], args.list_size).to(device)
-        
-        msg_bits_u = torch.zeros(llr.shape[0], code_dimension_k, args.list_size).to(device)
-
-        # print(scaled_binary_matrix_list_sized_pm_1.shape, c_hat_u.shape)
-
-        for i in range(args.list_size):
-
-            llr_list_clone.scatter_(1, t_indices, llr_max.unsqueeze(1).mm(PM_1_Matrix_List_Decoding[i,:].unsqueeze(0)) ) # modify the llr
-
-            c_hat_u[:, :, i] = (iterate_llr_for_r_2(llr_list_clone, iterations, mm) < 0.).float() # get the decoded codeword for this given llr
-
-            # Reed's Decoder here
-            c_hat_u[:, :, i], msg_bits_u[:, :, i] = Reeds_Decoder_avec_msgbits(c_hat_u[:, :, i])
-
-
-        net_llrs = contract('ijk, ij ->  ik', (-1)**c_hat_u , llr_tilde) # (batch, 2**t)
-
-        # c_hat_u.gather(2, net_llrs.argmax(1).unsqueeze(1).repeat(1, llr.shape[1]).unsqueeze(2)).squeeze(2)
-        
-        return msg_bits_u.gather(2, net_llrs.argmax(1).unsqueeze(1).repeat(1, code_dimension_k).unsqueeze(2)).squeeze(2)
-    
-    else:
-        
-        c_hat_RPA = (iterate_llr_for_r_2(llr, iterations, mm) < 0.).float()
-        
-        c_hat_Reeds, msg_bits_Reeds = Reeds_Decoder_avec_msgbits(c_hat_RPA)
-        
-        return msg_bits_Reeds
 
 
 
@@ -1008,22 +881,7 @@ def test_all(msg_bits, snr):
     ber_nn_for_plotkin = errors_ber(msg_bits, nn_decoded_bits_for_plotkin.sign()).item()
 
 
-    ### RPA stuff
-
-    # codewords_RM = (((1-msg_bits)/2).mm(Order2_Generator_Matrix)) % 2
-
-    # corrupted_codewords = (1-2*codewords_RM) + noise_sigma*standard_Gaussian
-
-    # llr = (2/noise_sigma**2)*corrupted_codewords
-
-    # # simple_sign_dec = (1- llr.sign())/2
-
-    # # _, Reeds_bits = Reeds_Decoder_avec_msgbits(simple_sign_dec)
-
-    # RPA_with_Reeds = (1-2*list_decoding(llr, args.m, None, 4)).sign()
-
-    # ber_RPA_with_Reeds = errors_ber(msg_bits, RPA_with_Reeds).item()
-    # bler_RPA_with_Reeds = errors_bler(msg_bits, RPA_with_Reeds).item()
+    
     ber_RPA_with_Reeds = 0
     bler_RPA_with_Reeds = 0
 
@@ -1048,32 +906,7 @@ elif args.m == 9:
 
 
 
-# reeds_ber = []
-# random_msg_bits = (2 * (torch.rand(1000, code_dimension_k) < 0.5).float() - 1).to(device)
-# for snr in snr_range:
 
-#     sigma = snr_db2sigma(snr)
-
-#     codewords_RM = (((1-random_msg_bits)/2).mm(Order2_Generator_Matrix)) % 2
-
-#     standard_Gaussian  = torch.randn_like(codewords_RM)
-
-#     corrupted_codewords = (1-2*codewords_RM) + sigma*standard_Gaussian
-
-#     llr = (2/sigma**2)*corrupted_codewords
-
-#     # simple_sign_dec = (1- llr.sign())/2
-
-#     # _, Reeds_bits = Reeds_Decoder_avec_msgbits(simple_sign_dec)
-
-#     RPA_with_Reeds = list_decoding(llr, args.m, None, 4)
-
-#     ber = errors_ber(random_msg_bits, (1-2*RPA_with_Reeds)).item()
-
-#     reeds_ber.append(ber)
-
-# plt.semilogy(snr_range, reeds_ber)
-# plt.show()
 
 test_size = 1000000
 
