@@ -49,8 +49,8 @@ parser.add_argument('--full_iterations', type=int, default=10000, help='full ite
 parser.add_argument('--enc_train_iters', type=int, default=50, help='encoder iterations')
 parser.add_argument('--dec_train_iters', type=int, default=500, help='decoder iterations')
 
-parser.add_argument('--enc_train_snr', type=float, default=-0.5., help='snr at enc are trained')
-parser.add_argument('--dec_train_snr', type=float, default=-2.5., help='snr at dec are trained')
+parser.add_argument('--enc_train_snr', type=float, default=-0.5, help='snr at enc are trained')
+parser.add_argument('--dec_train_snr', type=float, default=-2.5, help='snr at dec are trained')
 
 parser.add_argument('--loss_type', type=str, default='BCE', choices=['MSE', 'BCE'], help='loss function')
 
